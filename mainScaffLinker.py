@@ -52,15 +52,64 @@ def Merge_and_filtre(paf_dir, NbMatch, IdSeq):
 
 
 
+def Ancrage(data):
+    """
+    Trouve les associations de groupes entre les valeurs de 'Tname' et 'Qname' dans le DataFrame.
+    
+    Args:
+        data (pd.DataFrame): DataFrame contenant les colonnes 'Tname' et 'Qname'.
+        
+    Returns:
+        list: Liste de listes, où chaque sous-liste contient des groupes associés de 'Tname'.
+    """
+
+    # Obtenir les valeurs uniques de 'Tname' dans un ensemble pour une recherche plus rapide
+    list_tname = set(data['Tname'].unique())
+    # Liste pour stocker les groupes associés
+    liste_asso = []
+    
+    # Tant qu'il reste des éléments dans list_tname
+    while list_tname:
+        # Initialiser le groupe actuel de 'Tname' avec un des 'Tname' restants
+        tn = {list_tname.pop()}  # Utilisation de set pour éviter les doublons et recherche rapide
+        qn_asos = set(data[data['Tname'].isin(tn)]['Qname'])  # Initialiser les 'Qname' associés
+        
+        # Boucle pour trouver tous les 'Tname' associés aux 'Qname' actuels
+        while True:
+            # Trouver tous les 'Tname' associés aux 'Qname' actuels
+            tn_asos = set(data[data['Qname'].isin(qn_asos)]['Tname'].unique())
+            # Filtrer les 'Tname' déjà traités pour éviter les doublons
+            tn_asos -= tn  # Enlever les 'Tname' déjà ajoutés
+            
+            # Si aucun nouveau 'Tname' n'est trouvé, on arrête la boucle
+            if not tn_asos: break
+
+            # Ajouter les nouveaux 'Tname' au groupe actuel
+            tn.update(tn_asos)
+            # Mettre à jour les 'Qname' associés pour l'itération suivante
+            qn_asos = set(data[data['Tname'].isin(tn_asos)]['Qname'])
+               
+        # Ajouter le groupe trouvé à la liste des associations
+        liste_asso.append(list(tn))
+        # Mettre à jour list_tname pour retirer les 'Tname' traités
+        list_tname -= tn
+    
+    return liste_asso
+
+
+
 def Run(paf_dir, NbMatch, IdSeq):  
     df, df_filtre=Merge_and_filtre(paf_dir, NbMatch, IdSeq)
+    associations = Ancrage(df_filtre)
+    
+    for asso in associations:
+        print(asso)
 
-    print(df)
 
 if __name__ == "__main__":
     paf_dir = "02_masked_paf_files/02_paf_files_Gd45"
-    NbMatch = 5000
-    IdSeq = 0.95
+    NbMatch = 10000
+    IdSeq = 0.90
     Run(paf_dir, NbMatch, IdSeq)
 
     print('Terminée')
