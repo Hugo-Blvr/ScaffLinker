@@ -218,6 +218,56 @@ def Direction_assignment(data_asso):
     return [Tsens_Tref, Tinv_Tref, Qsens_Tref, Qinv_Tref]
 
 
+def Del_repeat(recup, seuil):
+    """
+    Supprime les lignes du DataFrame où les différences dans les coordonnées de début et de fin
+    pour Tname ou Qname sont inférieures à un seuil prédéfini, indiquant un 'repeat'.
+
+    Args:
+        recup (pd.DataFrame): DataFrame contenant les informations de correspondance.
+        seuil (int): Le seuil pour la différence maximale pour déterminer un 'repeat'.
+
+    Returns:
+        pd.DataFrame: DataFrame mis à jour sans les 'repeats'.
+    """
+    df = recup.copy()
+
+    # Grouper par 'Tname' et 'Qname' pour l'analyse
+    grouped = df.groupby(['Tname', 'Qname'])
+
+    # Initialiser les listes pour les indices et les contigs à supprimer
+    false_contig = set()
+    indexes_to_drop = []
+
+    # Itération sur les groupes pour identifier les 'repeats'
+    for (tname, qname), group in grouped:
+        if len(group) > 1:
+            # Calcul des différences pour déterminer les 'repeats'
+            tstart_diff = group['Tstart'].max() - group['Tstart'].min()
+            tstop_diff = group['Tstop'].max() - group['Tstop'].min()
+            qstart_diff = group['Qstart'].max() - group['Qstart'].min()
+            qstop_diff = group['Qstop'].max() - group['Qstop'].min()
+
+            target_repeat = (tstart_diff < seuil and tstop_diff < seuil)
+            query_repeat = (qstart_diff < seuil and qstop_diff < seuil)
+
+            # Marquer les contigs ou queries comme 'false' si répétition
+            if target_repeat or query_repeat:
+                if target_repeat: false_contig.add(tname)
+                if query_repeat: false_contig.add(qname)
+                indexes_to_drop.extend(group.index)
+
+    # Vérifier les groupes uniques et supprimer si marqués comme 'false'
+    for (tname, qname), group in grouped:
+        if len(group) == 1 and (tname in false_contig or qname in false_contig): 
+            indexes_to_drop.extend(group.index)
+
+    # Supprimer les indices identifiés du DataFrame
+    if indexes_to_drop: df.drop(indexes_to_drop, inplace=True)
+
+    return df.reset_index(drop=True)
+
+
 def Reverse(recup, direction):
     """
     Modifie les coordonnées de Tstart, Tstop, Qstart, Qstop, et la direction de 'Strand'
@@ -279,6 +329,47 @@ def Reverse(recup, direction):
     return data
 
 
+def Verification(reverse):
+    """
+    Agrège les informations par 'Tname' et 'Qname', calcule les couvertures et filtre les résultats
+    selon des critères de couverture et de positions de début et de fin.
+
+    Args:
+        reverse (pd.DataFrame): DataFrame contenant les correspondances inversées.
+
+    Returns:
+        pd.DataFrame: DataFrame agrégé et filtré selon les critères spécifiés.
+    """
+    # Créer une copie du DataFrame
+    rv = reverse.copy()
+    
+    # Agréger les données par 'Tname' et 'Qname'
+    grouped = rv.groupby(['Tname', 'Qname']).agg({
+        'Qlen': 'mean',
+        'Qstart': 'min',
+        'Qstop': 'max',
+        'Tlen': 'mean',
+        'Tstart': 'min',
+        'Tstop': 'max',
+        'NbMatch': 'sum',
+        'IdSeq': 'mean',
+        'ReverseT': 'first',
+        'ReverseQ': 'first'
+    }).reset_index()
+
+    # Calculer 'Qcover' et 'Tcover'
+    grouped['Qcover'] = grouped['NbMatch'] / (grouped['Qstop'] - grouped['Qstart'])
+    grouped['Tcover'] = grouped['NbMatch'] / (grouped['Tstop'] - grouped['Tstart'])
+
+    # Filtrer selon 'Qcover' et 'Tcover' > 0.3
+    filtered = grouped[(grouped['Qcover'] > 0.3) & (grouped['Tcover'] > 0.3)]
+
+    # Filtrer selon les critères de positions
+    filtered = filtered[((filtered['Qstart'] < 100000) | (filtered['Qlen'] - filtered['Qstop'] < 100000)) &
+                        ((filtered['Tstart'] < 100000) | (filtered['Tlen'] - filtered['Tstop'] < 100000))]
+
+    return filtered
+
 
 def Run(paf_dir, NbMatch, IdSeq, display = True):  
     df, df_filtre=Merge_and_filtre(paf_dir, NbMatch, IdSeq)
@@ -290,11 +381,28 @@ def Run(paf_dir, NbMatch, IdSeq, display = True):
         recup1 = Recup_match(df, data_asso,IdSeq-0.15) 
         direction = Direction_assignment(recup1)
         recup2 = Recup_match(df, data_asso,0.6)
-        reverse = Reverse(recup2, direction).sort_values(by = ['Tname','Qname','Tstart']).reset_index(drop = True)
+        
+        recup_less_del = Del_repeat(recup2, 3000)
+        new_ancrage = Ancrage(recup_less_del)
+
+        if not new_ancrage: continue
+        if len(new_ancrage) > 1 :
+            recup_less_del = recup_less_del[recup_less_del['Tname'].isin(new_ancrage[0])]
+            for i in new_ancrage[1:]: 
+                associations.append(i)
+        
+        reverse = Reverse(recup_less_del, direction).sort_values(by = ['Tname','Qname','Tstart']).reset_index(drop = True)
+        verif = Verification(reverse)
+        
+        if verif.empty: continue 
+        new_ancrage = Ancrage(verif)
+        if len(verif) > 1 :
+            verif = verif[verif['Tname'].isin(new_ancrage[0])].reset_index(drop = True)
+            for i in new_ancrage[1:]: associations.append(i)   
         
         if display : 
-            print('\n', '*'*50,asso,'\n',recup2)
-            print('\n',reverse)
+            print('\n', '*'*50,new_ancrage,'\n')
+            print('\n',reverse,'\n',verif)
 
 
 
