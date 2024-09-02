@@ -51,7 +51,6 @@ def Merge_and_filtre(paf_dir, NbMatch, IdSeq):
     return df_reste.reset_index(drop=True), df_filtre.reset_index(drop=True)
 
 
-
 def Ancrage(data):
     """
     Trouve les associations de groupes entre les valeurs de 'Tname' et 'Qname' dans le DataFrame.
@@ -97,13 +96,143 @@ def Ancrage(data):
     return liste_asso
 
 
+def Recup_match(df, df_asso, id_seq):
+    """
+    Récupère les lignes correspondant aux associations spécifiques entre 'Qname' et 'Tname'
+    à partir de 'df' et 'df_asso' et applique un filtre basé sur 'NbMatch' et 'IdSeq'.
+    
+    Args:
+        _df (pd.DataFrame): DataFrame contenant les données générales de correspondance.
+        df_asso (pd.DataFrame): DataFrame contenant les associations spécifiques de 'Qname' et 'Tname'.
+        id_seq (float): Seuil minimal pour le ratio d'identité de séquence 'IdSeq'.
+    
+    Returns:
+        pd.DataFrame: DataFrame filtré contenant les lignes correspondant aux associations spécifiques.
+    """
 
-def Run(paf_dir, NbMatch, IdSeq):  
+    # Filtrer 'df' pour ne conserver que les lignes avec les mêmes 'Qname' et 'Tname' que dans 'df_asso'
+    filtered_df = df[df[['Qname', 'Tname']].apply(tuple, axis=1).isin(df_asso[['Qname', 'Tname']].apply(tuple, axis=1))]
+    # Concaténer les lignes filtrées de 'df' à 'df_asso'
+    recup_match = pd.concat([df_asso, filtered_df], ignore_index=True)
+    # Appliquer les filtres sur 'NbMatch' et 'IdSeq'
+    recup_match = recup_match[(recup_match["NbMatch"] > 1000) & (recup_match["IdSeq"] > id_seq)]
+    
+    # Réinitialiser l'index avant de retourner le DataFrame
+    return recup_match.reset_index(drop=True)
+
+
+def Direction_assignment(data_asso):
+    """
+    Assigne les directions de correspondance entre contigs 'Tname' et 'Qname' basées sur le nombre de correspondances
+    et leur orientation. Le contig avec le plus grand nombre de correspondances est utilisé comme référence.
+    
+    Args:
+        data_asso (pd.DataFrame): DataFrame contenant les colonnes 'Tname', 'Qname', 'NbMatch', et 'Strand'.
+    
+    Returns:
+        list: Listes des contigs avec leur orientation relative au contig de référence.
+    """
+    
+    # Calculer le nombre total de correspondances par 'Tname', 'Qname' et 'Strand'
+    coverage_data = (
+        data_asso
+        .groupby(['Tname', 'Qname', 'Strand'], as_index=False)
+        .agg({'NbMatch': 'sum'})
+    )
+    # Trouver le strand avec le plus de correspondances pour chaque paire ('Tname', 'Qname')
+    strand_max = (
+        coverage_data
+        .loc[coverage_data.groupby(['Tname', 'Qname'])['NbMatch'].idxmax()]
+        .reset_index(drop=True)
+    )
+    
+    # Identifier le contig avec le plus grand nombre de correspondances
+    T_max_Nbmatch = strand_max.groupby('Tname')['NbMatch'].sum().idxmax()
+    
+    # Initialiser les listes de contigs et leurs orientations
+    Tsens_Tref = [T_max_Nbmatch]
+    Tinv_Tref, Qsens_Tref, Qinv_Tref = [], [], []
+    
+    # Créer un ensemble unique de tous les contigs 'Tname' et 'Qname' présents dans 'strand_max'
+    unique_contig = set(strand_max['Tname']).union(set(strand_max['Qname']))
+    # Retirer 'T_max_Nbmatch' de l'ensemble 'unique_contig' pour éviter de le traiter dans les boucles d'exploration suivantes
+    unique_contig.discard(T_max_Nbmatch)
+    # Liste pour stocker les contigs à explorer
+    listeT_explore = [T_max_Nbmatch]
+    
+    # Boucle principale pour explorer les contigs et assigner les directions
+    while unique_contig:   
+        # Liste pour stocker les 'Qname' qui seront explorés dans cette itération
+        listeQ_explore = []
+        # Filtrer le DataFrame 'strand_max' pour obtenir les lignes où 'Tname' est dans 'listeT_explore'
+        Trow = strand_max[strand_max['Tname'].isin(listeT_explore)]
+        # Trouver les lignes avec le nombre maximal de correspondances ('NbMatch') pour chaque 'Qname'
+        Tmatch_max = Trow.loc[Trow.groupby('Qname')['NbMatch'].idxmax()]
+        
+        # Parcourir chaque ligne du DataFrame 'Tmatch_max' pour déterminer les orientations
+        for _, row in Tmatch_max.iterrows():
+            target, query, strand = row['Tname'], row['Qname'], row['Strand']
+            
+            # Vérifier si le 'Qname' n'a pas encore été exploré
+            if query in unique_contig:
+                # Ajouter 'Qname' à la liste des éléments à explorer dans la prochaine itération
+                listeQ_explore.append(query)
+                
+                # Assigner l'orientation de 'Qname' par rapport au contig de référence
+                if strand == '+':
+                    if target in Tsens_Tref: Qsens_Tref.append(query)
+                    else: Qinv_Tref.append(query)
+                else:
+                    if target in Tsens_Tref: Qinv_Tref.append(query)
+                    else: Qsens_Tref.append(query)
+        
+        # Retirer les 'Tname' explorés de l'ensemble des contigs uniques pour éviter les doublons
+        unique_contig.difference_update(listeT_explore)
+        # Réinitialiser la liste des 'Tname' à explorer pour la prochaine itération
+        listeT_explore = []
+        # Filtrer le DataFrame 'strand_max' pour obtenir les lignes où 'Qname' est dans 'listeQ_explore'
+        Qrow = strand_max[strand_max['Qname'].isin(listeQ_explore)]
+        # Trouver les lignes avec le nombre maximal de correspondances ('NbMatch') pour chaque 'Tname'
+        Qmatch_max = Qrow.loc[Qrow.groupby('Tname')['NbMatch'].idxmax()]
+        
+        # Parcourir chaque ligne du DataFrame 'Qmatch_max' pour déterminer les orientations
+        for _, row in Qmatch_max.iterrows():
+            target, query, strand = row['Tname'], row['Qname'], row['Strand']
+            
+            # Vérifier si le 'Tname' n'a pas encore été exploré
+            if target in unique_contig:
+                # Ajouter 'Tname' à la liste des éléments à explorer dans la prochaine itération
+                listeT_explore.append(target)
+                
+                # Assigner l'orientation de 'Tname' par rapport au contig de référence
+                if strand == '+':
+                    if query in Qsens_Tref: Tsens_Tref.append(target)
+                    else: Tinv_Tref.append(target)
+                else:
+                    if query in Qsens_Tref: Tinv_Tref.append(target)
+                    else: Tsens_Tref.append(target)
+        
+        # Retirer les 'Qname' explorés de l'ensemble des contigs uniques pour éviter les doublons
+        unique_contig.difference_update(listeQ_explore)
+    
+    # Retourner les listes de contigs classifiés par leurs orientations relatives
+    return [Tsens_Tref, Tinv_Tref, Qsens_Tref, Qinv_Tref]
+
+
+def Run(paf_dir, NbMatch, IdSeq, display = True):  
     df, df_filtre=Merge_and_filtre(paf_dir, NbMatch, IdSeq)
     associations = Ancrage(df_filtre)
     
     for asso in associations:
-        print(asso)
+            
+        data_asso = df_filtre[df_filtre['Tname'].isin(asso)].reset_index(drop=True)
+        recup1 = Recup_match(df, data_asso,IdSeq-0.15) 
+        direction = Direction_assignment(recup1)
+            
+        if display : 
+            print('\n', '*'*50,'\n',asso)
+            print('\n',direction)
+
 
 
 if __name__ == "__main__":
