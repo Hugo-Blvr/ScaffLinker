@@ -1,8 +1,7 @@
 import pandas as pd
 import os
 
-pd.set_option('display.max_rows', None)
-
+#pd.set_option('display.max_rows', None)
 
 
 def Merge_and_filtre(paf_dir, NbMatch, IdSeq):
@@ -219,6 +218,68 @@ def Direction_assignment(data_asso):
     return [Tsens_Tref, Tinv_Tref, Qsens_Tref, Qinv_Tref]
 
 
+def Reverse(recup, direction):
+    """
+    Modifie les coordonnées de Tstart, Tstop, Qstart, Qstop, et la direction de 'Strand'
+    en fonction de la direction de référence et des contigs inversés.
+
+    Args:
+        recup (pd.DataFrame): DataFrame contenant les informations de correspondance.
+        direction (list): Liste contenant quatre listes : Tsens_Tref, Tinv_Tref, Qsens_Tref, Qinv_Tref.
+
+    Returns:
+        pd.DataFrame: DataFrame mis à jour avec les coordonnées et directions modifiées.
+    """
+    # Créer une copie du DataFrame pour ne pas modifier l'original
+    data = recup.copy()
+
+    # Ajouter les colonnes 'ReverseT' et 'ReverseQ' initialisées à False
+    data["ReverseT"] = False
+    data["ReverseQ"] = False
+
+    # Décompacter les listes de direction
+    Tsens_Tref, Tinv_Tref, Qsens_Tref, Qinv_Tref = direction
+
+    # Masques pour chaque condition
+    mask_Tsens_Qinv = data["Tname"].isin(Tsens_Tref) & data["Qname"].isin(Qinv_Tref)
+    mask_Tinv_Qsens = data["Tname"].isin(Tinv_Tref) & data["Qname"].isin(Qsens_Tref)
+    mask_Tinv_Qinv = data["Tname"].isin(Tinv_Tref) & data["Qname"].isin(Qinv_Tref)
+
+    # Calculer les nouvelles valeurs pour le masque Tsens_Tref et Qinv_Tref
+    new_Qstart_Tsens_Qinv = data.loc[mask_Tsens_Qinv, "Qlen"] - data.loc[mask_Tsens_Qinv, "Qstop"]
+    new_Qstop_Tsens_Qinv = data.loc[mask_Tsens_Qinv, "Qlen"] - data.loc[mask_Tsens_Qinv, "Qstart"]
+    # Appliquer les modifications pour le masque Tsens_Tref et Qinv_Tref
+    data.loc[mask_Tsens_Qinv, "Qstart"] = new_Qstart_Tsens_Qinv
+    data.loc[mask_Tsens_Qinv, "Qstop"] = new_Qstop_Tsens_Qinv
+    data.loc[mask_Tsens_Qinv, "ReverseQ"] = True
+    data.loc[mask_Tsens_Qinv, "Strand"] = data.loc[mask_Tsens_Qinv, "Strand"].apply(lambda x: '-' if x == '+' else '+')
+
+    # Calculer les nouvelles valeurs pour le masque Tinv_Tref et Qsens_Tref
+    new_Tstart_Tinv_Qsens = data.loc[mask_Tinv_Qsens, "Tlen"] - data.loc[mask_Tinv_Qsens, "Tstop"]
+    new_Tstop_Tinv_Qsens = data.loc[mask_Tinv_Qsens, "Tlen"] - data.loc[mask_Tinv_Qsens, "Tstart"]
+    # Appliquer les modifications pour le masque Tinv_Tref et Qsens_Tref
+    data.loc[mask_Tinv_Qsens, "Tstart"] = new_Tstart_Tinv_Qsens
+    data.loc[mask_Tinv_Qsens, "Tstop"] = new_Tstop_Tinv_Qsens
+    data.loc[mask_Tinv_Qsens, "ReverseT"] = True
+    data.loc[mask_Tinv_Qsens, "Strand"] = data.loc[mask_Tinv_Qsens, "Strand"].apply(lambda x: '-' if x == '+' else '+')
+
+    # Calculer les nouvelles valeurs pour le masque Tinv_Tref et Qinv_Tref
+    new_Tstart_Tinv_Qinv = data.loc[mask_Tinv_Qinv, "Tlen"] - data.loc[mask_Tinv_Qinv, "Tstop"]
+    new_Tstop_Tinv_Qinv = data.loc[mask_Tinv_Qinv, "Tlen"] - data.loc[mask_Tinv_Qinv, "Tstart"]
+    new_Qstart_Tinv_Qinv = data.loc[mask_Tinv_Qinv, "Qlen"] - data.loc[mask_Tinv_Qinv, "Qstop"]
+    new_Qstop_Tinv_Qinv = data.loc[mask_Tinv_Qinv, "Qlen"] - data.loc[mask_Tinv_Qinv, "Qstart"]
+    # Appliquer les modifications pour le masque Tinv_Tref et Qinv_Tref
+    data.loc[mask_Tinv_Qinv, "Tstart"] = new_Tstart_Tinv_Qinv
+    data.loc[mask_Tinv_Qinv, "Tstop"] = new_Tstop_Tinv_Qinv
+    data.loc[mask_Tinv_Qinv, "Qstart"] = new_Qstart_Tinv_Qinv
+    data.loc[mask_Tinv_Qinv, "Qstop"] = new_Qstop_Tinv_Qinv
+    data.loc[mask_Tinv_Qinv, "ReverseT"] = True
+    data.loc[mask_Tinv_Qinv, "ReverseQ"] = True
+
+    return data
+
+
+
 def Run(paf_dir, NbMatch, IdSeq, display = True):  
     df, df_filtre=Merge_and_filtre(paf_dir, NbMatch, IdSeq)
     associations = Ancrage(df_filtre)
@@ -228,10 +289,12 @@ def Run(paf_dir, NbMatch, IdSeq, display = True):
         data_asso = df_filtre[df_filtre['Tname'].isin(asso)].reset_index(drop=True)
         recup1 = Recup_match(df, data_asso,IdSeq-0.15) 
         direction = Direction_assignment(recup1)
-            
+        recup2 = Recup_match(df, data_asso,0.6)
+        reverse = Reverse(recup2, direction).sort_values(by = ['Tname','Qname','Tstart']).reset_index(drop = True)
+        
         if display : 
-            print('\n', '*'*50,'\n',asso)
-            print('\n',direction)
+            print('\n', '*'*50,asso,'\n',recup2)
+            print('\n',reverse)
 
 
 
