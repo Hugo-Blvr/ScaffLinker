@@ -371,6 +371,305 @@ def Verification(reverse):
     return filtered
 
 
+def sort(df):
+    """
+    Trouve toutes les chaînes de relations entre 'T1' et 'T2' dans le DataFrame
+    et fusionne les chaînes connectées.
+
+    Args:
+        df (pd.DataFrame): DataFrame contenant les colonnes 'T1' et 'T2'.
+
+    Returns:
+        list: Liste de listes, où chaque sous-liste représente une chaîne de 'T1' à 'T2'.
+    """
+
+    # Créer une copie du DataFrame pour éviter de modifier l'original
+    relations = df.copy()
+    # Liste pour stocker toutes les chaînes trouvées
+    all_order = []
+    
+    # Tant qu'il reste des relations à traiter
+    while not relations.empty:
+        # Initialiser la chaîne avec le premier lien dans les relations restantes
+        order = [relations.iloc[0]['T1'], relations.iloc[0]['T2']]
+        # Masque pour suivre les indices des lignes déjà utilisées
+        used_indices = {relations.index[0]}
+        
+        # Définir le point de départ pour la recherche du prochain lien
+        start = order[-1]
+        
+        # Boucle pour trouver tous les liens suivants qui commencent par 'start'
+        while True:
+            # Cherche les liens où 'T1' est égal à 'start'
+            next_links = relations[relations['T1'] == start]
+            if not next_links.empty:
+                # Récupère le prochain élément 'T2' à ajouter à la chaîne
+                next_item = next_links.iloc[0]['T2']
+                # Ajoute l'élément à la chaîne actuelle
+                order.append(next_item)
+                # Met à jour 'start' pour la prochaine itération
+                start = next_item
+                # Marque cet indice comme utilisé
+                used_indices.add(next_links.index[0])
+            else:
+                # Si aucun lien n'est trouvé, termine la boucle
+                break
+        
+        # Filtrer le DataFrame pour retirer les relations déjà utilisées
+        relations = relations[~relations.index.isin(used_indices)]
+        
+        # Vérifie si la chaîne actuelle peut être fusionnée avec une chaîne existante
+        merged = False
+        for existing_order in all_order:
+            if order[0] == existing_order[-1]:
+                # Fusionne en ajoutant la chaîne actuelle à la fin de l'existante
+                existing_order.extend(order[1:])
+                merged = True
+                break
+            elif order[-1] == existing_order[0]:
+                # Fusionne en ajoutant la chaîne existante au début de la chaîne actuelle
+                existing_order[0:0] = order[:-1]
+                merged = True
+                break
+        
+        # Si la chaîne n'a pas été fusionnée, l'ajouter comme nouvelle chaîne
+        if not merged:
+            all_order.append(order)
+    
+    # Retourne la liste de toutes les chaînes trouvées
+    return all_order
+
+
+def position_sc(infos, order, df):
+    """
+    Construit un DataFrame représentant l'ordre et la position des contigs et des intervalles entre eux,
+    en suivant l'ordre spécifié.
+
+    Args:
+        infos (pd.DataFrame): DataFrame contenant des informations sur les relations entre contigs.
+        order (list): Liste de contigs représentant l'ordre à suivre.
+        df (pd.DataFrame): DataFrame contenant des informations détaillées sur les contigs.
+
+    Returns:
+        pd.DataFrame: DataFrame représentant le scaffold final avec positions et orientations des contigs.
+    """
+
+    # Trouver le premier contig de l'ordre et initialiser le DataFrame scaffold
+    T1 = df[df['Tname'] == order[0]].iloc[0]
+    scaffold_data = [{"Contig_name": T1['Tname'], 'Start': 0, 'End': T1['Tlen'], 
+                      'reverse': T1['ReverseT'], 'len': T1['Tlen'], 'Type': 'T'}]
+
+    # Boucle à travers chaque paire consécutive dans l'ordre pour construire le scaffold
+    for i in range(len(order) - 1):
+        # Trouver les informations d'association pour le contig courant
+        info = infos[infos['T1'] == order[i]].iloc[0]
+        
+        # Si une longueur d'intervalle inter-contig est présente, ajouter l'intervalle
+        if info['len_inter_contig'] > 0:
+            Q = df[df['Qname'] == info['Q']].iloc[0]
+            scaffold_data.append({"Contig_name": Q['Qname'], 'Start': info['inter_contig'][0], 
+                                  'End': info['inter_contig'][1], 'reverse': Q['ReverseT'], 
+                                  'len': Q['Qlen'], 'Type': 'Q'})
+
+        # Ajouter le contig suivant dans l'ordre
+        T = df[df['Tname'] == info["T2"]].iloc[0]
+        scaffold_data.append({"Contig_name": T['Tname'], 'Start': 0, 'End': T['Tlen'], 
+                              'reverse': T['ReverseT'], 'len': T['Tlen'], 'Type': 'T'})
+
+    # Convertir la liste de données en DataFrame final
+    scaffold = pd.DataFrame(scaffold_data)
+
+    return scaffold
+
+
+def tails(scaffold, df):
+    """
+    Modifie le DataFrame scaffold en ajoutant des segments (tails) au début et à la fin
+    en fonction des conditions basées sur les contigs.
+
+    Args:
+        scaffold (pd.DataFrame): DataFrame représentant le scaffold actuel.
+        df (pd.DataFrame): DataFrame contenant les informations des contigs.
+
+    Returns:
+        pd.DataFrame: DataFrame mis à jour avec les segments ajoutés.
+    """
+    
+    # Vérification des tails en amont (au début du scaffold)
+    # Filtrer pour obtenir les lignes où 'Tname' correspond au premier contig du scaffold
+    data_before = df[df['Tname'] == scaffold['Contig_name'].iloc[0]]
+    # Appliquer les conditions de filtre spécifiques pour les tails en amont
+    data_before = data_before[(data_before['Tstart'] < 50000) & (data_before['Qstart'] > 100000)]
+    
+    if not data_before.empty:
+        # Calculer la différence entre 'Qstart' et 'Tstart' et trouver la ligne avec la plus grande différence
+        data_before['Diff'] = data_before['Qstart'] - data_before['Tstart']
+        # Sélectionner la ligne où la différence est maximale
+        data_before = data_before.loc[data_before['Diff'].idxmax()]
+        # Créer un DataFrame pour le tail trouvé et concaténer au début du scaffold
+        sc_before = pd.DataFrame([{
+            "Contig_name": data_before['Qname'], 
+            'Start': 0,
+            'End': data_before['Qstart'], 
+            'reverse': data_before['ReverseQ'],
+            'len': data_before['Qlen'], 
+            'Type': 'Q'
+        }])
+        scaffold = pd.concat([sc_before, scaffold], ignore_index=True)
+    
+    # Vérification des tails en aval (à la fin du scaffold)
+    # Filtrer pour obtenir les lignes où 'Tname' correspond au dernier contig du scaffold
+    data_after = df[df['Tname'] == scaffold['Contig_name'].iloc[-1]]
+    # Appliquer les conditions de filtre spécifiques pour les tails en aval
+    data_after = data_after[
+        (data_after['Tlen'] - data_after['Tstop'] < 50000) & 
+        (data_after['Qlen'] - data_after['Qstop'] > 100000)
+    ]
+    
+    if not data_after.empty:
+        # Calculer la différence entre les longueurs de queues et trouver la ligne avec la plus grande différence
+        data_after['Diff'] = (data_after['Qlen'] - data_after['Qstop']) - (data_after['Tlen'] - data_after['Tstop'])
+        # Sélectionner la ligne où la différence est maximale
+        data_after = data_after.loc[data_after['Diff'].idxmax()]
+        # Créer un DataFrame pour le tail trouvé et concaténer à la fin du scaffold
+        sc_after = pd.DataFrame([{
+            "Contig_name": data_after['Qname'], 
+            'Start': data_after['Qstop'],
+            'End': data_after['Qlen'], 
+            'reverse': data_after['ReverseQ'],
+            'len': data_after['Qlen'], 
+            'Type': 'Q'
+        }])
+        scaffold = pd.concat([scaffold, sc_after], ignore_index=True)
+    
+    # Retourner le DataFrame scaffold mis à jour
+    return scaffold 
+
+
+def clean_relations(df):
+    """
+    Nettoie et filtre les relations entre les entités T1 et T2 dans le DataFrame.
+
+    Args:
+        df (pd.DataFrame): DataFrame contenant les colonnes 'T1', 'T2', 'dist_end_T1', 'id_seq', 'cover', et 'len_inter_contig'.
+
+    Returns:
+        pd.DataFrame: DataFrame nettoyé et filtré des relations.
+    """
+
+    # Copie du DataFrame pour éviter de modifier l'original
+    infos = df.copy()
+
+    # Calcul du score pour chaque relation (corrigé pour la priorité des opérations)
+    infos['score'] = round((infos['dist_end_T1'] + 1) / (infos['id_seq'] * infos['cover']), 3)
+
+    # Trier par 'score' et 'len_inter_contig' pour ordonner les doublons
+    infos = infos.sort_values(by=['score', 'len_inter_contig']).reset_index(drop=True)
+
+    # Supprimer les doublons en gardant le meilleur score pour chaque paire ('T1', 'T2')
+    infos = infos.drop_duplicates(subset=['T1', 'T2'], keep='first')
+
+    # Supprimer les lignes avec T1 et T2 inversés pour éliminer les contradictions
+    infos['pair'] = infos.apply(lambda row: tuple(sorted([row['T1'], row['T2']])), axis=1)
+    infos = infos.drop_duplicates(subset=['pair'], keep=False)
+    infos = infos.drop(columns=['pair'])
+    
+    # Supprimer les relations contradictoires en suivant les chaînes de relations
+    T1_seen, T2_seen, all_seen = set(), set(), set()
+    rows_to_keep = []
+
+    for index, row in infos.iterrows():
+        T1, T2 = row['T1'], row['T2']
+        if T1 not in T1_seen and T2 not in T2_seen and not (T1 in all_seen and T2 in all_seen):
+            # Ajouter T1 et T2 aux ensembles appropriés si aucune contradiction n'est détectée
+            T1_seen.add(T1)
+            T2_seen.add(T2)
+            all_seen.add(T1)
+            all_seen.add(T2)
+            rows_to_keep.append(index)
+    
+    # Garder uniquement les lignes qui ne contiennent pas de contradictions
+    infos_cleaned = infos.loc[rows_to_keep]
+    
+    return infos_cleaned.reset_index(drop=True)
+
+
+def scaffolding(df): 
+    """
+    Construit un scaffold à partir des relations entre contigs dans le DataFrame.
+
+    Args:
+        df (pd.DataFrame): DataFrame contenant des informations sur les contigs.
+
+    Returns:
+        tuple: (DataFrame du scaffold, liste des contigs restants non utilisés)
+    """
+    # Filtrer les contigs et créer une liste unique de noms de 'Tname'
+    lTname = list(set(df['Tname']))
+
+    if len(lTname) > 1:
+        # Initialiser un DataFrame vide pour stocker les informations sur les relations entre contigs
+        infos_list = []
+        lQname = list(set(df['Qname']))
+        
+        # Parcourir chaque 'Qname' pour construire les relations entre 'Tname'
+        for qname in lQname:
+            # Trier les données par 'Qstart' pour analyser les contigs consécutifs
+            data = df[df['Qname'] == qname].sort_values(by=['Qstart'])
+
+            # Boucle à travers les données triées pour trouver les paires de contigs
+            for i in range(len(data) - 1):
+                d = data.iloc[i]
+                d1 = data.iloc[i + 1]
+                
+                # Créer une entrée pour chaque paire de contigs
+                info = {
+                    "Q": d['Qname'], 
+                    "T1": d['Tname'], 
+                    "T2": d1['Tname'], 
+                    'inter_contig': [d['Qstop'], d1['Qstart']], 
+                    'len_inter_contig': d1['Qstart'] - d['Qstop'], 
+                    'id_seq': (d['IdSeq'] + d1['IdSeq']) / 2,
+                    'cover': (d['Qcover'] + d1['Qcover'] + d['Tcover'] + d1['Tcover']) / 4,
+                    'dist_end_T1': d['Tlen'] - d['Tstop']
+                }
+                infos_list.append(info)
+        
+        # Convertir la liste d'infos en DataFrame
+        if infos_list:
+            infos = pd.DataFrame(infos_list)
+            # Nettoyer les relations pour enlever les doublons et contradictions
+            infos_sort = clean_relations(infos)
+        else:
+            return pd.DataFrame(), False
+        
+        # Si des relations valides sont trouvées, créer un scaffold
+        if not infos_sort.empty:
+            orders = sort(infos_sort)
+            order = orders[0]
+            reste = orders[1:]
+            scaffold = position_sc(infos_sort, order, df)
+        else:
+            return pd.DataFrame(), False
+    else:
+        # Si un seul contig est présent, créer un scaffold simple avec ce contig
+        reste = []
+        T1 = df.iloc[0]
+        scaffold = pd.DataFrame([{
+            "Contig_name": T1['Tname'], 
+            'Start': 0, 
+            'End': T1['Tlen'], 
+            'reverse': T1['ReverseT'], 
+            'len': T1['Tlen'], 
+            'Type': 'T'
+        }])
+    
+    # Optionnellement, ajouter des tails (extension) au scaffold
+    # scaffold = tails(scaffold.reset_index(drop=True), df)
+    
+    return scaffold, reste
+
+
 def Run(paf_dir, NbMatch, IdSeq, display = True):  
     df, df_filtre=Merge_and_filtre(paf_dir, NbMatch, IdSeq)
     associations = Ancrage(df_filtre)
@@ -400,15 +699,19 @@ def Run(paf_dir, NbMatch, IdSeq, display = True):
             verif = verif[verif['Tname'].isin(new_ancrage[0])].reset_index(drop = True)
             for i in new_ancrage[1:]: associations.append(i)   
         
+        scaffold,reste = scaffolding(verif.reset_index(drop = True))
+        if scaffold.empty : continue
+        for i in reste: associations.append(i)
+
         if display : 
             print('\n', '*'*50,new_ancrage,'\n')
-            print('\n',reverse,'\n',verif)
+            print('\n',verif,'\n\n',scaffold)
 
 
 
 if __name__ == "__main__":
     paf_dir = "02_masked_paf_files/02_paf_files_Gd45"
-    NbMatch = 10000
+    NbMatch = 5000
     IdSeq = 0.90
     Run(paf_dir, NbMatch, IdSeq)
 
