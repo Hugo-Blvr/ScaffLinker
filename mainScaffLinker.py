@@ -1,5 +1,8 @@
 import pandas as pd
 import os
+from Bio import SeqIO
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
 
 #pd.set_option('display.max_rows', None)
 
@@ -118,6 +121,36 @@ def Recup_match(df, df_asso, id_seq):
     
     # Réinitialiser l'index avant de retourner le DataFrame
     return recup_match.reset_index(drop=True)
+
+
+def Dic_fasta(dir_assemblies, ref_name):
+    """
+    Parcourt un répertoire de fichiers FASTA et construit un dictionnaire contenant les séquences.
+
+    Args:
+        dir_assemblies (str): Chemin vers le répertoire contenant les fichiers FASTA.
+        ref_name (str): Nom de référence à utiliser pour remplacer le préfixe dans les clés du dictionnaire.
+
+    Returns:
+        dict: Dictionnaire contenant les séquences de chaque fichier FASTA.
+    """
+    
+    dico_fasta = {}
+
+    # Parcourir tous les fichiers dans le répertoire spécifié
+    for fasta in os.listdir(dir_assemblies):
+        # Vérifier que le fichier a l'extension '.fasta'
+        if fasta.endswith(".fasta"):
+            # Extraire le préfixe du nom de fichier pour utiliser comme clé
+            file_name = fasta.split("_")[0]
+            # Remplacer le nom de fichier par 'ref' si cela correspond au nom de référence donné
+            if file_name == ref_name: file_name = 'ref'
+
+            # Lire le fichier FASTA et le convertir en dictionnaire de séquences
+            file_path = os.path.join(dir_assemblies, fasta)
+            dico_fasta[file_name] = SeqIO.to_dict(SeqIO.parse(file_path, format='fasta'))
+    
+    return dico_fasta
 
 
 def Direction_assignment(data_asso):
@@ -371,7 +404,7 @@ def Verification(reverse):
     return filtered
 
 
-def sort(df):
+def Sort(df):
     """
     Trouve toutes les chaînes de relations entre 'T1' et 'T2' dans le DataFrame
     et fusionne les chaînes connectées.
@@ -390,11 +423,11 @@ def sort(df):
     
     # Tant qu'il reste des relations à traiter
     while not relations.empty:
+        
         # Initialiser la chaîne avec le premier lien dans les relations restantes
         order = [relations.iloc[0]['T1'], relations.iloc[0]['T2']]
         # Masque pour suivre les indices des lignes déjà utilisées
         used_indices = {relations.index[0]}
-        
         # Définir le point de départ pour la recherche du prochain lien
         start = order[-1]
         
@@ -402,6 +435,7 @@ def sort(df):
         while True:
             # Cherche les liens où 'T1' est égal à 'start'
             next_links = relations[relations['T1'] == start]
+            
             if not next_links.empty:
                 # Récupère le prochain élément 'T2' à ajouter à la chaîne
                 next_item = next_links.iloc[0]['T2']
@@ -411,15 +445,14 @@ def sort(df):
                 start = next_item
                 # Marque cet indice comme utilisé
                 used_indices.add(next_links.index[0])
-            else:
-                # Si aucun lien n'est trouvé, termine la boucle
-                break
+            # Si aucun lien n'est trouvé, termine la boucle
+            else: break
         
         # Filtrer le DataFrame pour retirer les relations déjà utilisées
         relations = relations[~relations.index.isin(used_indices)]
-        
         # Vérifie si la chaîne actuelle peut être fusionnée avec une chaîne existante
         merged = False
+        
         for existing_order in all_order:
             if order[0] == existing_order[-1]:
                 # Fusionne en ajoutant la chaîne actuelle à la fin de l'existante
@@ -433,14 +466,13 @@ def sort(df):
                 break
         
         # Si la chaîne n'a pas été fusionnée, l'ajouter comme nouvelle chaîne
-        if not merged:
-            all_order.append(order)
+        if not merged: all_order.append(order)
     
     # Retourne la liste de toutes les chaînes trouvées
     return all_order
 
 
-def position_sc(infos, order, df):
+def Position_sc(infos, order, df):
     """
     Construit un DataFrame représentant l'ordre et la position des contigs et des intervalles entre eux,
     en suivant l'ordre spécifié.
@@ -546,7 +578,7 @@ def tails(scaffold, df):
     return scaffold 
 
 
-def clean_relations(df):
+def Clean_relations(df):
     """
     Nettoie et filtre les relations entre les entités T1 et T2 dans le DataFrame.
 
@@ -559,21 +591,17 @@ def clean_relations(df):
 
     # Copie du DataFrame pour éviter de modifier l'original
     infos = df.copy()
-
     # Calcul du score pour chaque relation (corrigé pour la priorité des opérations)
     infos['score'] = round((infos['dist_end_T1'] + 1) / (infos['id_seq'] * infos['cover']), 3)
-
     # Trier par 'score' et 'len_inter_contig' pour ordonner les doublons
     infos = infos.sort_values(by=['score', 'len_inter_contig']).reset_index(drop=True)
-
+    
     # Supprimer les doublons en gardant le meilleur score pour chaque paire ('T1', 'T2')
     infos = infos.drop_duplicates(subset=['T1', 'T2'], keep='first')
-
     # Supprimer les lignes avec T1 et T2 inversés pour éliminer les contradictions
     infos['pair'] = infos.apply(lambda row: tuple(sorted([row['T1'], row['T2']])), axis=1)
     infos = infos.drop_duplicates(subset=['pair'], keep=False)
     infos = infos.drop(columns=['pair'])
-    
     # Supprimer les relations contradictoires en suivant les chaînes de relations
     T1_seen, T2_seen, all_seen = set(), set(), set()
     rows_to_keep = []
@@ -594,7 +622,7 @@ def clean_relations(df):
     return infos_cleaned.reset_index(drop=True)
 
 
-def scaffolding(df): 
+def Scaffolding(df): 
     """
     Construit un scaffold à partir des relations entre contigs dans le DataFrame.
 
@@ -620,8 +648,7 @@ def scaffolding(df):
             # Boucle à travers les données triées pour trouver les paires de contigs
             for i in range(len(data) - 1):
                 d = data.iloc[i]
-                d1 = data.iloc[i + 1]
-                
+                d1 = data.iloc[i + 1]  
                 # Créer une entrée pour chaque paire de contigs
                 info = {
                     "Q": d['Qname'], 
@@ -639,16 +666,15 @@ def scaffolding(df):
         if infos_list:
             infos = pd.DataFrame(infos_list)
             # Nettoyer les relations pour enlever les doublons et contradictions
-            infos_sort = clean_relations(infos)
-        else:
-            return pd.DataFrame(), False
+            infos_sort = Clean_relations(infos)
+        else: return pd.DataFrame(), False
         
         # Si des relations valides sont trouvées, créer un scaffold
         if not infos_sort.empty:
-            orders = sort(infos_sort)
+            orders = Sort(infos_sort)
             order = orders[0]
             reste = orders[1:]
-            scaffold = position_sc(infos_sort, order, df)
+            scaffold = Position_sc(infos_sort, order, df)
         else:
             return pd.DataFrame(), False
     else:
@@ -664,15 +690,73 @@ def scaffolding(df):
             'Type': 'T'
         }])
     
-    # Optionnellement, ajouter des tails (extension) au scaffold
+    # Ajouter des tails (extension) au scaffold
     # scaffold = tails(scaffold.reset_index(drop=True), df)
     
     return scaffold, reste
 
 
-def Run(paf_dir, NbMatch, IdSeq, display = True):  
+def Make_fasta(scaffold, scaffold_name, outfile_name, fasta):
+    """
+    Génère un fichier FASTA à partir des informations de scaffold et des séquences de contigs.
+
+    Args:
+        scaffold (pd.DataFrame): DataFrame contenant les informations des contigs et leurs positions.
+        scaffold_name (str): Nom du scaffold à utiliser dans le fichier FASTA.
+        outfile_name (str): Nom du fichier de sortie FASTA.
+        fasta (dict): Dictionnaire contenant les séquences des contigs.
+    
+    Returns:
+        str: Nom du scaffold utilisé dans le fichier FASTA.
+    """
+    
+    # Initialiser une liste pour stocker les morceaux de séquence
+    seq_pieces = []
+
+    # Parcourir chaque ligne du DataFrame scaffold pour construire la séquence complète
+    for index, row in scaffold.iterrows():
+        # Extraire le nom du contig et l'indicateur de référence
+        contig = row['Contig_name'].split('$')[-1]
+        ind = 'ref' if '$' not in row['Contig_name'] else row['Contig_name'].split('$')[0]
+        
+        # Déterminer les positions de début et de fin en fonction de l'orientation
+        if row['reverse']:
+            # Pour une séquence inversée, ajuster les positions de début et de fin
+            start = row['len'] - row['End']
+            stop = row['len'] - row['Start']
+            seq_fasta = fasta[ind][contig].seq[int(start):int(stop)].reverse_complement()
+        # Pour une séquence non inversée, utiliser les positions directement       
+        else: seq_fasta = fasta[ind][contig].seq[int(row['Start']):int(row['End'])]
+
+        # Mettre en minuscules si le contig n'est pas de la référence
+        if ind != 'ref': seq_fasta = seq_fasta.lower()
+        
+        # Ajouter la séquence au morceau de séquence complet
+        seq_pieces.append(str(seq_fasta))
+    
+    # Concaténer toutes les pièces de séquence pour former la séquence finale
+    full_sequence = Seq(''.join(seq_pieces))
+    # Créer un enregistrement de séquence pour l'écriture dans le fichier FASTA
+    scaffold_record = SeqRecord(full_sequence, id=scaffold_name, description='')
+
+    # Écrire la séquence dans le fichier FASTA en mode 'append'
+    with open(outfile_name, 'a') as file: SeqIO.write(scaffold_record, file, "fasta")
+    
+    # Retourner le nom du scaffold utilisé
+    return scaffold_name
+
+
+def Run(dir_assemblies, paf_dir, NbMatch, IdSeq, dir_out ='.', output_fasta = False, display = True):  
     df, df_filtre=Merge_and_filtre(paf_dir, NbMatch, IdSeq)
     associations = Ancrage(df_filtre)
+        
+    ref_contig = []
+    ref_name = paf_dir.split('/')[-1].split("_")[-1]
+    outfile_name = f'{dir_out}/sc_{ref_name}_0{str(IdSeq).split(".")[1]}_{str(NbMatch)}.fasta'
+    results = pd.DataFrame()
+    
+    if output_fasta : 
+        fastas = Dic_fasta(dir_assemblies,ref_name)
     
     for asso in associations:
             
@@ -699,20 +783,51 @@ def Run(paf_dir, NbMatch, IdSeq, display = True):
             verif = verif[verif['Tname'].isin(new_ancrage[0])].reset_index(drop = True)
             for i in new_ancrage[1:]: associations.append(i)   
         
-        scaffold,reste = scaffolding(verif.reset_index(drop = True))
+        scaffold,reste = Scaffolding(verif.reset_index(drop = True))
         if scaffold.empty : continue
         for i in reste: associations.append(i)
-
+        
+        
+        if len(scaffold) > 1 :
+            result = scaffold.copy()
+            all_contig = scaffold['Contig_name'].drop_duplicates().values.tolist()
+            scaflod_name = '-'.join(all_contig)
+            result['sc_name'] = scaflod_name 
+            result['file'] = outfile_name
+            
+            results = pd.concat([results,result])
+            
+            if output_fasta : 
+                ref_contig += set(scaffold[scaffold["Type"]=='T']["Contig_name"])   
+                Make_fasta(scaffold,scaflod_name, outfile_name, fastas)
+        
         if display : 
-            print('\n', '*'*50,new_ancrage,'\n')
+            print('\n', '*'*50,new_ancrage[0],'\n')
             print('\n',verif,'\n\n',scaffold)
+
+
+    if output_fasta:
+        for contig_id, contig_record in fastas['ref'].items():
+            if contig_id not in ref_contig:
+                with open(outfile_name, 'a') as f:
+                    SeqIO.write(contig_record, f, "fasta")
+
+    if results.empty : results = pd.DataFrame([{"Contig_name": None, 'Start':None,'End':None, 'reverse': None,'len':None,'Type':None,
+                                             'sc_name':None,'file':outfile_name}])
+    
+    return results
+
 
 
 
 if __name__ == "__main__":
+    dir_assemblies = '01_filtered_assemblies'
     paf_dir = "02_masked_paf_files/02_paf_files_Gd45"
     NbMatch = 5000
     IdSeq = 0.90
-    Run(paf_dir, NbMatch, IdSeq)
+    dir_out = '.'
+    output_fasta = False
+    
+    Run(dir_assemblies, paf_dir, NbMatch, IdSeq, dir_out=dir_out, output_fasta=output_fasta)
 
     print('Terminée')
