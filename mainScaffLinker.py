@@ -3,6 +3,7 @@ import os
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
+import sys
 
 #pd.set_option('display.max_rows', None)
 
@@ -746,7 +747,7 @@ def Make_fasta(scaffold, scaffold_name, outfile_name, fasta):
     return scaffold_name
 
 
-def Run(dir_assemblies, paf_dir, NbMatch, IdSeq, dir_out ='.', output_fasta = False, display = True):  
+def Run(dir_assemblies, paf_dir, NbMatch, IdSeq, dir_out ='.', output_fasta = False, display = False):  
     df, df_filtre=Merge_and_filtre(paf_dir, NbMatch, IdSeq)
     associations = Ancrage(df_filtre)
         
@@ -821,13 +822,12 @@ def Run(dir_assemblies, paf_dir, NbMatch, IdSeq, dir_out ='.', output_fasta = Fa
 
 
 if __name__ == "__main__":
-    dir_assemblies = '01_filtered_assemblies'
-    paf_dir = "02_masked_paf_files/02_paf_files_Gd45"
-    NbMatch = 5000
-    IdSeq = 0.90
-    dir_out = '.'
-    output_fasta = False
+    dir_assemblies = sys.argv[1]
+    paf_dir = sys.argv[2]
+    NbMatch = int(sys.argv[3])
+    IdSeq = float(sys.argv[4])
+    dir_out = sys.argv[5]
     
-    Run(dir_assemblies, paf_dir, NbMatch, IdSeq, dir_out=dir_out, output_fasta=output_fasta)
+    Run(dir_assemblies, paf_dir, NbMatch, IdSeq, dir_out=dir_out, output_fasta=True)
 
     print('Terminée')

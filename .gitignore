@@ -1,3 +1,6 @@
 ScaffLinker_result.py
 02_masked_paf_files/*/*
+02_masked_paf_filess/*/*
 01_filtered_assemblies/*
+03_scaffolding/*
+.gitignore
