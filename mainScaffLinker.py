@@ -819,8 +819,6 @@ def Run(dir_assemblies, paf_dir, NbMatch, IdSeq, dir_out ='.', output_fasta = Fa
     return results
 
 
-
-
 if __name__ == "__main__":
     dir_assemblies = sys.argv[1]
     paf_dir = sys.argv[2]
